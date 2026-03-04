@@ -78,7 +78,6 @@
             const [adminInput, setAdminInput] = useState('');
             const [showAdminPanel, setShowAdminPanel] = useState(false);
             
-            // 관리자 모드: 학번/이름 입력 분리
             const [adminNewStudentId, setAdminNewStudentId] = useState('');
             const [adminNewName, setAdminNewName] = useState('');
             
@@ -293,7 +292,7 @@
                                         <div className="bg-slate-800 p-4 rounded-2xl">
                                             <p className="text-[10px] font-black text-blue-300 mb-4 uppercase tracking-widest text-center">개별 등록</p>
                                             <div className="space-y-3">
-                                                <input type="text" placeholder="학번" value={adminNewStudentId} onChange={e=>setAdminNewStudentId(e.target.value)} className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-slate-700 text-white outline-none focus:border-blue-500" />
+                                                <input type="text" placeholder="학번 (예: 122XXXXX)" value={adminNewStudentId} onChange={e=>setAdminNewStudentId(e.target.value)} className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-slate-700 text-white outline-none focus:border-blue-500" />
                                                 <input type="text" placeholder="이름" value={adminNewName} onChange={e=>setAdminNewName(e.target.value)} className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-slate-700 text-white outline-none focus:border-blue-500" />
                                                 <button onClick={addSingleMember} className="w-full bg-blue-600 py-3 rounded-xl font-bold text-sm hover:bg-blue-700">명단 추가</button>
                                             </div>
@@ -333,7 +332,7 @@
                                 <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="relative group">
                                         <Icon name="hash" className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 w-5 h-5 group-focus-within:text-blue-500 transition-colors" />
-                                        <input type="text" value={studentId} onChange={e=>setStudentId(e.target.value)} placeholder="학번 (예: 10101)" className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none font-bold text-lg transition-all h-16" />
+                                        <input type="text" value={studentId} onChange={e=>setStudentId(e.target.value)} placeholder="학번 (예: 122XXXXX)" className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none font-bold text-lg transition-all h-16" />
                                     </div>
                                     <div className="relative group">
                                         <Icon name="user" className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 w-5 h-5 group-focus-within:text-blue-500 transition-colors" />
