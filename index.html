@@ -22,43 +22,36 @@
 <body class="bg-slate-50">
     <div id="root"></div>
 
+    <!-- [중요] data-type="module"이 있어야 import 구문이 작동합니다 -->
     <script type="text/babel" data-type="module">
-        const { useState, useEffect, useCallback, useMemo } = React;
+        const { useState, useEffect, useCallback } = React;
 
         // Firebase Modules from CDN
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, query, deleteDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        /**
-         * [중요] 외부 배포 시 설정 방법:
-         * 1. Firebase Console(console.firebase.google.com)에서 프로젝트를 만듭니다.
-         * 2. '앱 추가(웹)'를 선택하여 아래의 firebaseConfig 객체 내용을 본인의 설정으로 교체하세요.
-         */
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : {
-                apiKey: "AIzaSyCANVK_865365opkg7r-rWHEZsFLQ93zJ0",
-                authDomain: "book-your-locker.firebaseapp.com",
-                projectId: "book-your-locker",
-                storageBucket: "book-your-locker.firebasestorage.app",
-                messagingSenderId: "859305778315",
-                appId: "1:859305778315:web:7defc0354ba246c1d5888e""
-            };
+        // Firebase Config - 본인의 설정값으로 교체되어 있는지 확인하세요
+        const firebaseConfig = {
+            apiKey: "AIzaSyCANVK_865365opkg7r-rWHEZsFLQ93zJ0",
+            authDomain: "book-your-locker.firebaseapp.com",
+            projectId: "book-your-locker",
+            storageBucket: "book-your-locker.firebasestorage.app",
+            messagingSenderId: "859305778315",
+            appId: "1:859305778315:web:7defc0354ba246c1d5888e"
+        };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'locker-system-standalone';
+        const appId = 'locker-system-standalone';
 
         const ROWS = ['A', 'B', 'C', 'D', 'E'];
         const COLS = Array.from({ length: 18 }, (_, i) => i + 1);
 
         const Icon = ({ name, className }) => {
             useEffect(() => { 
-                if (window.lucide) {
-                    window.lucide.createIcons(); 
-                }
+                if (window.lucide) window.lucide.createIcons(); 
             }, [name]);
             return <i data-lucide={name} className={className}></i>;
         };
@@ -69,6 +62,7 @@
             const [config, setConfig] = useState({ allowedMembers: [], disabledSlots: [], adminCode: 'admin123' });
             const [userName, setUserName] = useState(localStorage.getItem('locker_user_name') || '');
             const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
             const [adminInput, setAdminInput] = useState('');
             const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -88,8 +82,8 @@
                     try {
                         await signInAnonymously(auth);
                     } catch (e) { 
-                        console.error("Auth Error:", e);
-                        showToast("서버 연결에 실패했습니다. Firebase 설정을 확인하세요.", "error");
+                        console.error(e);
+                        setError("파이어베이스 인증 실패: 보안 규칙이나 설정을 확인하세요.");
                     }
                 };
                 initAuth();
@@ -105,8 +99,9 @@
                     snap.forEach(doc => d[doc.id] = doc.data());
                     setLockers(d);
                     setLoading(false);
-                }, (error) => {
-                    console.error("Locker Sync Error:", error);
+                }, (err) => {
+                    console.error(err);
+                    setError("데이터 읽기 권한이 없습니다. 보안 규칙을 설정해주세요.");
                     setLoading(false);
                 });
 
@@ -120,7 +115,6 @@
                     });
                     setConfig(c);
                 });
-
                 return () => { unsubLockers(); unsubConfig(); };
             }, [user]);
 
@@ -144,9 +138,7 @@
                             try {
                                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'lockers', slotId));
                                 showToast("취소되었습니다.");
-                            } catch (e) {
-                                showToast("취소 중 오류가 발생했습니다.", "error");
-                            }
+                            } catch (e) { showToast("삭제 실패. 규칙을 확인하세요.", "error"); }
                             setConfirmModal(null);
                         }
                     });
@@ -155,53 +147,38 @@
 
                 if (!locker && !config.disabledSlots.includes(slotId)) {
                     const trimmedName = userName.trim();
-                    if (!trimmedName) { 
-                        showToast("이름을 먼저 입력하고 '설정 완료'를 눌러주세요.", "error"); 
-                        return; 
-                    }
+                    if (!trimmedName) { showToast("이름을 먼저 입력하세요.", "error"); return; }
                     if (config.allowedMembers.length > 0 && !config.allowedMembers.includes(trimmedName)) {
-                        showToast("등록된 명단에 없는 이름입니다.", "error"); 
-                        return;
+                        showToast("명단에 없는 이름입니다.", "error"); return;
                     }
                     if (Object.values(lockers).some(l => l.uid === user.uid)) {
-                        showToast("이미 예약된 자리가 있습니다.", "error"); 
-                        return;
+                        showToast("이미 예약된 자리가 있습니다.", "error"); return;
                     }
                     try {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'lockers', slotId), {
-                            name: trimmedName, 
-                            uid: user.uid, 
-                            timestamp: Date.now()
+                            name: trimmedName, uid: user.uid, timestamp: Date.now()
                         });
                         localStorage.setItem('locker_user_name', trimmedName);
-                        showToast(`${slotId}번 예약 완료!`, "success");
-                    } catch (e) {
-                        showToast("예약 중 오류가 발생했습니다.", "error");
-                    }
+                        showToast(`${slotId}번 예약 성공!`, "success");
+                    } catch (e) { showToast("예약 실패. 규칙을 확인하세요.", "error"); }
                 }
             };
 
-            const switchUser = async () => {
-                setConfirmModal({
-                    title: "사용자 전환",
-                    message: "현재 이름을 지우고 다른 이름으로 예약하시겠습니까? (현재 페이지가 새로고침됩니다)",
-                    onConfirm: async () => {
-                        try {
-                            await signOut(auth);
-                            localStorage.removeItem('locker_user_name');
-                            setUserName('');
-                            location.reload();
-                        } catch (e) {
-                            showToast("로그아웃 실패", "error");
-                        }
-                    }
-                });
-            };
+            if (error) return (
+                <div className="h-screen flex items-center justify-center bg-red-50 p-6 text-center">
+                    <div className="bg-white p-8 rounded-3xl shadow-xl border border-red-100 max-w-md">
+                        <Icon name="alert-triangle" className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                        <h2 className="text-xl font-bold text-red-700 mb-2">오류 발생</h2>
+                        <p className="text-slate-600 mb-4">{error}</p>
+                        <button onClick={() => location.reload()} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold">새로고침</button>
+                    </div>
+                </div>
+            );
 
             if (loading) return (
                 <div className="h-screen flex items-center justify-center bg-white flex-col gap-4">
                     <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="font-bold text-slate-400">데이터를 불러오는 중...</p>
+                    <p className="font-bold text-slate-400">데이터 동기화 중...</p>
                 </div>
             );
 
@@ -214,7 +191,6 @@
                             {toast.message}
                         </div>
                     )}
-
                     {confirmModal && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl">
@@ -234,70 +210,47 @@
                                 <div className="bg-blue-600 p-2 rounded-lg"><Icon name="shield-check" className="w-5 h-5 text-white" /></div>
                                 <span className="font-black text-lg tracking-tighter">사물함 예약 현황</span>
                             </div>
-                            <div className="flex gap-2">
-                                {userName && (
-                                    <button onClick={switchUser} className="text-xs font-bold bg-slate-100 px-3 py-2 rounded-xl hover:bg-slate-200 transition-colors">이름 변경</button>
-                                )}
-                                <button onClick={() => setShowAdminPanel(!showAdminPanel)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
-                                    <Icon name="settings" className="w-5 h-5 text-slate-400" />
-                                </button>
-                            </div>
+                            <button onClick={() => setShowAdminPanel(!showAdminPanel)} className="p-2 hover:bg-slate-100 rounded-xl">
+                                <Icon name="settings" className="w-5 h-5 text-slate-400" />
+                            </button>
                         </div>
                     </div>
 
                     <div className="max-w-7xl mx-auto p-4 md:p-8">
                         {showAdminPanel && (
-                            <div className="mb-8 bg-slate-900 rounded-[2.5rem] p-6 text-white shadow-2xl animate-in slide-in-from-top-4 duration-300">
+                            <div className="mb-8 bg-slate-900 rounded-[2.5rem] p-6 text-white shadow-2xl">
                                 <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
                                     <h2 className="font-bold text-blue-400 flex items-center gap-2"><Icon name="lock" className="w-4 h-4"/> 관리자 모드</h2>
                                     {!isAdmin ? (
                                         <div className="flex gap-2">
-                                            <input 
-                                                type="password" 
-                                                placeholder="비밀번호" 
-                                                value={adminInput} 
-                                                onChange={e=>setAdminInput(e.target.value)} 
-                                                className="bg-slate-800 px-3 py-1.5 rounded-lg text-sm outline-none border border-slate-700 focus:border-blue-500 w-28" 
-                                            />
-                                            <button 
-                                                onClick={()=>{if(adminInput===config.adminCode){setIsAdmin(true);setAdminInput('');}else{showToast("비밀번호가 틀렸습니다.","error");}}} 
-                                                className="bg-blue-600 px-4 py-1.5 rounded-lg text-sm font-bold"
-                                            >인증</button>
+                                            <input type="password" placeholder="비번" value={adminInput} onChange={e=>setAdminInput(e.target.value)} className="bg-slate-800 px-3 py-1.5 rounded-lg text-sm border border-slate-700 focus:border-blue-500 w-28 text-white" />
+                                            <button onClick={()=>{if(adminInput===config.adminCode){setIsAdmin(true);setAdminInput('');}else{showToast("비번 틀림","error");}}} className="bg-blue-600 px-4 py-1.5 rounded-lg text-sm font-bold">인증</button>
                                         </div>
                                     ) : (
-                                        <button onClick={()=>setIsAdmin(false)} className="bg-red-500/10 text-red-500 px-3 py-1 rounded-lg text-xs font-bold border border-red-500/20 uppercase tracking-widest">Logout</button>
+                                        <button onClick={()=>setIsAdmin(false)} className="bg-red-500/10 text-red-500 px-3 py-1 rounded-lg text-xs font-bold border border-red-500/20">Logout</button>
                                     )}
                                 </div>
                                 {isAdmin && (
                                     <div className="grid md:grid-cols-3 gap-6">
-                                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
-                                            <p className="text-xs font-bold text-blue-300 mb-2 uppercase tracking-widest">비번 변경</p>
-                                            <input type="text" placeholder="새 비번" value={newAdminCode} onChange={e=>setNewAdminCode(e.target.value)} className="w-full bg-slate-900 p-2 rounded-lg mb-2 text-sm border border-slate-700" />
-                                            <button onClick={async ()=>{if(!newAdminCode.trim())return;await setDoc(doc(db,'artifacts',appId,'public','data','config','admin'),{code:newAdminCode.trim()});setNewAdminCode('');showToast("변경되었습니다.");}} className="w-full bg-blue-600 py-2 rounded-lg text-xs font-bold">변경 저장</button>
+                                        <div className="bg-slate-800 p-4 rounded-2xl">
+                                            <p className="text-xs font-bold text-blue-300 mb-2 uppercase">비번 변경</p>
+                                            <input type="text" placeholder="새 비번" value={newAdminCode} onChange={e=>setNewAdminCode(e.target.value)} className="w-full bg-slate-900 p-2 rounded-lg mb-2 text-sm border border-slate-700 text-white" />
+                                            <button onClick={async ()=>{if(!newAdminCode.trim())return;await setDoc(doc(db,'artifacts',appId,'public','data','config','admin'),{code:newAdminCode.trim()});setNewAdminCode('');showToast("변경됨");}} className="w-full bg-blue-600 py-2 rounded-lg text-xs font-bold">저장</button>
                                         </div>
-                                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
-                                            <p className="text-xs font-bold text-blue-300 mb-2 uppercase tracking-widest">명단 관리</p>
-                                            <textarea placeholder="이름들 (엔터 또는 콤마 구분)" value={newMembersInput} onChange={e=>setNewMembersInput(e.target.value)} className="w-full bg-slate-900 p-2 rounded-lg mb-2 text-sm h-16 border border-slate-700 custom-scrollbar" />
-                                            <button onClick={async ()=>{const inc=newMembersInput.split(/[\n,]+/).map(n=>n.trim()).filter(n=>n&&!config.allowedMembers.includes(n));await setDoc(doc(db,'artifacts',appId,'public','data','config','members'),{list:[...config.allowedMembers,...inc]});setNewMembersInput('');}} className="w-full bg-indigo-600 py-2 rounded-lg text-xs font-bold">명단 추가</button>
-                                            <div className="mt-2 flex flex-wrap gap-1 max-h-12 overflow-y-auto custom-scrollbar">
-                                                {config.allowedMembers.map(m => (
-                                                    <span key={m} className="bg-slate-700 px-2 py-0.5 rounded text-[10px] flex items-center gap-1">
-                                                        {m} 
-                                                        <Icon name="x" className="w-2 h-2 cursor-pointer text-red-400" onClick={async ()=>{await setDoc(doc(db,'artifacts',appId,'public','data','config','members'),{list:config.allowedMembers.filter(x=>x!==m)});}} />
-                                                    </span>
-                                                ))}
-                                                {config.allowedMembers.length === 0 && <span className="text-[10px] text-slate-500 italic">등록된 명단 없음 (모두 허용)</span>}
-                                            </div>
+                                        <div className="bg-slate-800 p-4 rounded-2xl">
+                                            <p className="text-xs font-bold text-blue-300 mb-2 uppercase">명단 관리</p>
+                                            <textarea placeholder="이름 (엔터/콤마)" value={newMembersInput} onChange={e=>setNewMembersInput(e.target.value)} className="w-full bg-slate-900 p-2 rounded-lg mb-2 text-sm h-16 border border-slate-700 text-white" />
+                                            <button onClick={async ()=>{const inc=newMembersInput.split(/[\n,]+/).map(n=>n.trim()).filter(n=>n&&!config.allowedMembers.includes(n));await setDoc(doc(db,'artifacts',appId,'public','data','config','members'),{list:[...config.allowedMembers,...inc]});setNewMembersInput('');}} className="w-full bg-indigo-600 py-2 rounded-lg text-xs font-bold">추가</button>
                                         </div>
-                                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 flex flex-col justify-between">
+                                        <div className="bg-slate-800 p-4 rounded-2xl flex flex-col justify-between">
                                             <div>
-                                                <p className="text-xs font-bold text-blue-300 mb-2 uppercase tracking-widest">시스템 제어</p>
-                                                <div className="flex gap-2 mb-2">
-                                                    <button onClick={()=>setEditMode('reserve')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${editMode==='reserve'?'bg-blue-600 text-white shadow-lg shadow-blue-500/20':'bg-slate-700 text-slate-400'}`}>일반모드</button>
-                                                    <button onClick={()=>setEditMode('manage-slots')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${editMode==='manage-slots'?'bg-amber-500 text-white shadow-lg shadow-amber-500/20':'bg-slate-700 text-slate-400'}`}>차단모드</button>
+                                                <p className="text-xs font-bold text-blue-300 mb-2 uppercase tracking-widest">모드 설정</p>
+                                                <div className="flex gap-2">
+                                                    <button onClick={()=>setEditMode('reserve')} className={`flex-1 py-2 rounded-lg text-xs font-bold ${editMode==='reserve'?'bg-blue-600':'bg-slate-700 text-slate-400'}`}>예약</button>
+                                                    <button onClick={()=>setEditMode('manage-slots')} className={`flex-1 py-2 rounded-lg text-xs font-bold ${editMode==='manage-slots'?'bg-amber-500 text-white shadow-lg shadow-amber-500/20':'bg-slate-700 text-slate-400'}`}>차단</button>
                                                 </div>
                                             </div>
-                                            <button onClick={async ()=>{if(!confirm("정말로 모든 데이터를 초기화하시겠습니까?"))return;const snap=await getDocs(collection(db,'artifacts',appId,'public', 'data', 'lockers'));const b=writeBatch(db);snap.forEach(d=>b.delete(d.ref));await b.commit();showToast("모든 자리가 초기화되었습니다.");}} className="w-full border border-red-500/30 text-red-400 py-2 rounded-lg text-xs font-bold hover:bg-red-500 hover:text-white transition-all">전체 초기화</button>
+                                            <button onClick={async ()=>{if(!confirm("모두 지움?"))return;const snap=await getDocs(collection(db,'artifacts',appId,'public','data','lockers'));const b=writeBatch(db);snap.forEach(d=>b.delete(d.ref));await b.commit();showToast("초기화됨");}} className="w-full border border-red-500/30 text-red-400 py-2 rounded-lg text-xs font-bold mt-2 hover:bg-red-500 hover:text-white transition-all">전체 초기화</button>
                                         </div>
                                     </div>
                                 )}
@@ -306,29 +259,20 @@
 
                         <div className="bg-white rounded-[2.5rem] shadow-xl p-6 md:p-8 mb-8 border border-slate-100 flex flex-col md:flex-row gap-6 items-end">
                             <div className="flex-1 w-full">
-                                <label className="text-[10px] font-black text-slate-400 mb-2 block uppercase tracking-[0.2em] ml-1">이름을 먼저 설정한 뒤 자리를 골라주세요</label>
+                                <label className="text-[10px] font-black text-slate-400 mb-2 block uppercase tracking-widest ml-1 leading-none">본인 이름을 입력하세요</label>
                                 <div className="relative">
                                     <Icon name="user" className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 w-5 h-5" />
-                                    <input 
-                                        type="text" 
-                                        value={userName} 
-                                        onChange={e=>setUserName(e.target.value)} 
-                                        placeholder="이름 입력 (예: 홍길동)" 
-                                        className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none font-bold text-lg transition-all" 
-                                    />
+                                    <input type="text" value={userName} onChange={e=>setUserName(e.target.value)} placeholder="이름 (예: 홍길동)" className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none font-bold text-lg transition-all" />
                                 </div>
                             </div>
-                            <button 
-                                onClick={()=>{localStorage.setItem('locker_user_name', userName);showToast("이름이 설정되었습니다!","success");}} 
-                                className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all w-full md:w-auto"
-                            >설정 완료</button>
+                            <button onClick={()=>{localStorage.setItem('locker_user_name', userName);showToast("설정 완료!","success");}} className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all w-full md:w-auto">설정 완료</button>
                         </div>
 
                         <div className={`bg-white rounded-[3rem] p-6 shadow-2xl overflow-x-auto border-8 transition-all ${editMode==='manage-slots'?'border-amber-400':'border-white'}`}>
                             <div className="min-w-[1500px]">
                                 <div className="grid grid-cols-[60px_repeat(18,1fr)] gap-3 mb-6">
                                     <div className="h-4"></div>
-                                    {COLS.map(c => <div key={c} className="text-center font-black text-slate-200 text-sm">{c}열</div>)}
+                                    {COLS.map(c => <div key={c} className="text-center font-black text-slate-200 text-sm leading-none">{c}열</div>)}
                                 </div>
                                 {ROWS.map(row => (
                                     <div key={row} className="grid grid-cols-[60px_repeat(18,1fr)] gap-3 mb-3">
@@ -340,49 +284,22 @@
                                             const isDis = config.disabledSlots.includes(id);
                                             const isOcc = !!l;
                                             return (
-                                                <button 
-                                                    key={id} 
-                                                    onClick={()=>handleSlotClick(id)} 
-                                                    className={`h-24 rounded-2xl border-2 transition-all flex flex-col items-center justify-center relative group
-                                                        ${isDis ? 'bg-red-50 border-red-100 text-red-200 cursor-not-allowed' :
-                                                          isMine ? 'bg-blue-600 border-blue-700 text-white shadow-xl scale-[0.97] z-10' :
-                                                          isOcc ? 'bg-slate-50 border-slate-100 text-slate-400' :
-                                                          'bg-white border-slate-100 hover:border-blue-400 hover:shadow-xl text-slate-200'}
-                                                    `}
-                                                >
+                                                <button key={id} onClick={()=>handleSlotClick(id)} className={`h-24 rounded-2xl border-2 transition-all flex flex-col items-center justify-center relative group
+                                                    ${isDis ? 'bg-red-50 border-red-100 text-red-200' :
+                                                      isMine ? 'bg-blue-600 border-blue-700 text-white shadow-xl scale-[0.97] z-10' :
+                                                      isOcc ? 'bg-slate-50 border-slate-100 text-slate-400' :
+                                                      'bg-white border-slate-100 hover:border-blue-400 hover:shadow-xl text-slate-200'}
+                                                `}>
                                                     {isDis ? <Icon name="ban" className="w-6 h-6 opacity-30"/> :
-                                                     isMine ? (
-                                                        <>
-                                                            <Icon name="check-circle" className="w-6 h-6 mb-1"/>
-                                                            <span className="text-[11px] font-black truncate px-2 w-full uppercase tracking-tighter">{l.name}</span>
-                                                        </>
-                                                     ) :
-                                                     isOcc ? (
-                                                        <>
-                                                            <Icon name="lock" className="w-5 h-5 opacity-10 mb-1"/>
-                                                            <span className="text-[10px] font-bold truncate px-2 w-full tracking-tighter">{l.name}</span>
-                                                            {isAdmin && <Icon name="trash-2" className="absolute inset-0 m-auto w-7 h-7 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-2xl p-1 shadow-lg"/>}
-                                                        </>
-                                                     ) :
-                                                     (
-                                                        <>
-                                                            <Icon name="unlock" className="w-5 h-5 opacity-5 mb-1"/>
-                                                            <span className="text-[10px] font-black">{id}</span>
-                                                        </>
-                                                     )}
+                                                     isMine ? <><Icon name="check-circle" className="w-6 h-6 mb-1"/><span className="text-[11px] font-black truncate px-2 w-full uppercase leading-none">{l.name}</span></> :
+                                                     isOcc ? <><Icon name="lock" className="w-5 h-5 opacity-10 mb-1"/><span className="text-[10px] font-bold truncate px-2 w-full leading-none">{l.name}</span>{isAdmin && <Icon name="trash-2" className="absolute inset-0 m-auto w-7 h-7 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-2xl p-1 shadow-lg"/>}</> :
+                                                     <><Icon name="unlock" className="w-5 h-5 opacity-5 mb-1"/><span className="text-[10px] font-black leading-none">{id}</span></>}
                                                 </button>
                                             );
                                         })}
                                     </div>
                                 ))}
                             </div>
-                        </div>
-
-                        <div className="mt-10 flex flex-wrap gap-10 justify-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
-                            <div className="flex items-center gap-3"><div className="w-5 h-5 bg-white border-2 border-slate-200 rounded-lg"></div> 빈 자리</div>
-                            <div className="flex items-center gap-3"><div className="w-5 h-5 bg-blue-600 rounded-lg shadow-md shadow-blue-200"></div> 내 사물함</div>
-                            <div className="flex items-center gap-3"><div className="w-5 h-5 bg-slate-100 rounded-lg"></div> 예약 완료</div>
-                            <div className="flex items-center gap-3"><div className="w-5 h-5 bg-red-50 border-2 border-red-100 rounded-lg"></div> 사용 불가</div>
                         </div>
                     </div>
                 </div>
