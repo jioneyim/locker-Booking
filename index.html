@@ -22,7 +22,6 @@
 <body class="bg-slate-50">
     <div id="root"></div>
 
-    <!-- [중요] data-type="module"이 있어야 import 구문이 작동합니다 -->
     <script type="text/babel" data-type="module">
         const { useState, useEffect, useCallback } = React;
 
@@ -49,11 +48,12 @@
         const ROWS = ['A', 'B', 'C', 'D', 'E'];
         const COLS = Array.from({ length: 18 }, (_, i) => i + 1);
 
-        const Icon = ({ name, className }) => {
+        // Icon 컴포넌트 수정: onClick 등 추가 속성을 받을 수 있도록 ...props 추가
+        const Icon = ({ name, className, ...props }) => {
             useEffect(() => { 
                 if (window.lucide) window.lucide.createIcons(); 
             }, [name]);
-            return <i data-lucide={name} className={className}></i>;
+            return <i data-lucide={name} className={className} {...props}></i>;
         };
 
         function App() {
@@ -164,6 +164,16 @@
                 }
             };
 
+            const removeMember = async (nameToRemove) => {
+                try {
+                    const newList = config.allowedMembers.filter(name => name !== nameToRemove);
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'members'), { list: newList });
+                    showToast(`${nameToRemove}님이 삭제되었습니다.`);
+                } catch (e) {
+                    showToast("삭제 중 오류 발생", "error");
+                }
+            };
+
             if (error) return (
                 <div className="h-screen flex items-center justify-center bg-red-50 p-6 text-center">
                     <div className="bg-white p-8 rounded-3xl shadow-xl border border-red-100 max-w-md">
@@ -241,6 +251,21 @@
                                             <p className="text-xs font-bold text-blue-300 mb-2 uppercase">명단 관리</p>
                                             <textarea placeholder="이름 (엔터/콤마)" value={newMembersInput} onChange={e=>setNewMembersInput(e.target.value)} className="w-full bg-slate-900 p-2 rounded-lg mb-2 text-sm h-16 border border-slate-700 text-white" />
                                             <button onClick={async ()=>{const inc=newMembersInput.split(/[\n,]+/).map(n=>n.trim()).filter(n=>n&&!config.allowedMembers.includes(n));await setDoc(doc(db,'artifacts',appId,'public','data','config','members'),{list:[...config.allowedMembers,...inc]});setNewMembersInput('');}} className="w-full bg-indigo-600 py-2 rounded-lg text-xs font-bold">추가</button>
+                                            
+                                            {/* 명단 리스트 표시 및 삭제 기능 개선 */}
+                                            <div className="mt-3 flex flex-wrap gap-1 max-h-24 overflow-y-auto custom-scrollbar bg-slate-950/50 p-2 rounded-lg border border-slate-800">
+                                                {config.allowedMembers.map(m => (
+                                                    <span key={m} className="bg-slate-800 px-2 py-1 rounded-md text-[10px] flex items-center gap-1 group">
+                                                        {m} 
+                                                        <Icon 
+                                                            name="x" 
+                                                            className="w-3 h-3 cursor-pointer text-slate-500 hover:text-red-400 transition-colors" 
+                                                            onClick={() => removeMember(m)}
+                                                        />
+                                                    </span>
+                                                ))}
+                                                {config.allowedMembers.length === 0 && <span className="text-[10px] text-slate-500 italic">등록된 명단 없음</span>}
+                                            </div>
                                         </div>
                                         <div className="bg-slate-800 p-4 rounded-2xl flex flex-col justify-between">
                                             <div>
@@ -250,7 +275,7 @@
                                                     <button onClick={()=>setEditMode('manage-slots')} className={`flex-1 py-2 rounded-lg text-xs font-bold ${editMode==='manage-slots'?'bg-amber-500 text-white shadow-lg shadow-amber-500/20':'bg-slate-700 text-slate-400'}`}>차단</button>
                                                 </div>
                                             </div>
-                                            <button onClick={async ()=>{if(!confirm("모두 지움?"))return;const snap=await getDocs(collection(db,'artifacts',appId,'public','data','lockers'));const b=writeBatch(db);snap.forEach(d=>b.delete(d.ref));await b.commit();showToast("초기화됨");}} className="w-full border border-red-500/30 text-red-400 py-2 rounded-lg text-xs font-bold mt-2 hover:bg-red-500 hover:text-white transition-all">전체 초기화</button>
+                                            <button onClick={async ()=>{if(!confirm("모두 지움?"))return;const snap=await getDocs(collection(db,'artifacts',appId,'public', 'data', 'lockers'));const b=writeBatch(db);snap.forEach(d=>b.delete(d.ref));await b.commit();showToast("초기화됨");}} className="w-full border border-red-500/30 text-red-400 py-2 rounded-lg text-xs font-bold mt-2 hover:bg-red-500 hover:text-white transition-all">전체 초기화</button>
                                         </div>
                                     </div>
                                 )}
