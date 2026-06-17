@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Pretendard:wght@400;700;900&display=swap");
+
+body {
+  font-family: "Pretendard", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+@keyframes pulse-border {
+  0% {
+    border-color: rgba(37, 99, 235, 0.4);
+  }
+  50% {
+    border-color: rgba(37, 99, 235, 1);
+  }
+  100% {
+    border-color: rgba(37, 99, 235, 0.4);
+  }
+}
+
+.mine-highlight {
+  animation: pulse-border 2s infinite;
+}
+
+.locker-cell {
+  width: 95px;
+  height: 95px;
+  flex-shrink: 0;
+}
