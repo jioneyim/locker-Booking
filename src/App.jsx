@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useRef,
   useState
 } from "react";
 
@@ -8,6 +9,7 @@ import {
   AlertCircle,
   Ban,
   CheckCircle,
+  ClipboardPaste,
   Hash,
   Lock,
   LogOut,
@@ -37,12 +39,31 @@ import {
   writeBatch
 } from "firebase/firestore";
 
-import { auth, db } from "./firebase";
+import {
+  auth,
+  db
+} from "./firebase";
 
 
-const ADMIN_UID = "5Ilq7bZIM1UjtvsWFSYhrO4fFq32";
+/* =========================================================
+   관리자 Firebase UID
+========================================================= */
 
-const ROWS = ["A", "B", "C", "D", "E"];
+const ADMIN_UID =
+  "5Ilq7bZIM1UjtvsWFSYhrO4fFq32";
+
+
+/* =========================================================
+   사물함 구조
+========================================================= */
+
+const ROWS = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E"
+];
 
 const COLS = Array.from(
   { length: 18 },
@@ -52,91 +73,166 @@ const COLS = Array.from(
 
 export default function App() {
 
-  const [user, setUser] = useState(null);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  /* =========================================================
+     Firebase / 데이터
+  ========================================================= */
 
-  const [lockers, setLockers] = useState({});
-
-  const [members, setMembers] = useState([]);
-
-  const [settings, setSettings] = useState({
-    isLocked: false,
-    disabledSlots: []
-  });
-
-
-  const [studentId, setStudentId] = useState("");
-
-  const [userName, setUserName] = useState("");
-
-  const [studentAuthenticated, setStudentAuthenticated] =
-    useState(false);
-
-
-  const [loading, setLoading] = useState(true);
-
-  const [error, setError] = useState("");
-
-
-  const [toast, setToast] = useState(null);
-
-  const [confirmModal, setConfirmModal] =
+  const [user, setUser] =
     useState(null);
 
-
-  const [showAdminPanel, setShowAdminPanel] =
+  const [isAdmin, setIsAdmin] =
     useState(false);
 
-  const [adminEmail, setAdminEmail] =
+  const [lockers, setLockers] =
+    useState({});
+
+  const [members, setMembers] =
+    useState([]);
+
+  const [settings, setSettings] =
+    useState({
+      isLocked: false,
+      disabledSlots: []
+    });
+
+
+
+  /* =========================================================
+     인증 전환 상태
+
+     관리자 → 로그아웃 → 익명 로그인 사이에
+     Firestore permission 오류가 순간적으로 발생하는 것을 방지
+  ========================================================= */
+
+  const authTransitionRef =
+    useRef(false);
+
+
+
+  /* =========================================================
+     학생
+  ========================================================= */
+
+  const [studentId, setStudentId] =
     useState("");
 
-  const [adminPassword, setAdminPassword] =
+  const [userName, setUserName] =
     useState("");
 
-  const [adminStudentId, setAdminStudentId] =
+  const [
+    studentAuthenticated,
+    setStudentAuthenticated
+  ] = useState(false);
+
+
+
+  /* =========================================================
+     공통 화면
+  ========================================================= */
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
     useState("");
 
-  const [adminStudentName, setAdminStudentName] =
-    useState("");
+  const [toast, setToast] =
+    useState(null);
 
-  const [adminMode, setAdminMode] =
-    useState("normal");
+  const [
+    confirmModal,
+    setConfirmModal
+  ] = useState(null);
 
 
 
-  const showToast = useCallback(
-    (message, type = "info") => {
+  /* =========================================================
+     관리자
+  ========================================================= */
 
-      setToast({
+  const [
+    showAdminPanel,
+    setShowAdminPanel
+  ] = useState(false);
+
+  const [
+    adminEmail,
+    setAdminEmail
+  ] = useState("");
+
+  const [
+    adminPassword,
+    setAdminPassword
+  ] = useState("");
+
+  const [
+    adminStudentId,
+    setAdminStudentId
+  ] = useState("");
+
+  const [
+    adminStudentName,
+    setAdminStudentName
+  ] = useState("");
+
+  const [
+    bulkMembers,
+    setBulkMembers
+  ] = useState("");
+
+  const [
+    adminMode,
+    setAdminMode
+  ] = useState("normal");
+
+
+
+  /* =========================================================
+     Toast
+  ========================================================= */
+
+  const showToast =
+    useCallback(
+      (
         message,
-        type
-      });
+        type = "info"
+      ) => {
 
-      window.setTimeout(
-        () => setToast(null),
-        3000
-      );
+        setToast({
+          message,
+          type
+        });
 
-    },
-    []
-  );
+        window.setTimeout(
+          () => {
+            setToast(null);
+          },
+          3000
+        );
+
+      },
+      []
+    );
 
 
 
-  /*
-    Firebase Authentication
+  /* =========================================================
+     Firebase Authentication
 
-    일반 사용자:
-    Anonymous
+     일반 사용자
+     → Anonymous
 
-    관리자:
-    Email / Password
-  */
+     관리자
+     → Email / Password
+
+     로그아웃
+     → 자동으로 다시 Anonymous
+  ========================================================= */
 
   useEffect(() => {
 
-    let initializing = true;
+    let cancelled = false;
 
 
     const unsubscribe =
@@ -144,23 +240,47 @@ export default function App() {
         auth,
         async firebaseUser => {
 
+          if (cancelled) {
+            return;
+          }
+
+
           /*
-            로그인된 사용자가 없는 경우
-            자동으로 익명 로그인
+            현재 로그인 사용자 없음
+
+            관리자 로그아웃 직후에도 여기로 들어옴.
+            Firestore listener를 먼저 종료시키고
+            익명 로그인을 다시 수행.
           */
 
           if (!firebaseUser) {
 
+            authTransitionRef.current =
+              true;
+
+            setUser(null);
+
+            setIsAdmin(false);
+
             try {
 
-              await signInAnonymously(auth);
+              await signInAnonymously(
+                auth
+              );
 
             } catch (err) {
+
+              if (cancelled) {
+                return;
+              }
 
               console.error(
                 "Anonymous authentication error:",
                 err
               );
+
+              authTransitionRef.current =
+                false;
 
               setError(
                 "Firebase 인증에 실패했습니다."
@@ -173,45 +293,55 @@ export default function App() {
           }
 
 
-          setUser(firebaseUser);
-
-
           /*
-            Firebase UID로 실제 관리자 여부 판별
+            로그인 완료
           */
 
-          const admin =
-            firebaseUser.uid === ADMIN_UID;
+          authTransitionRef.current =
+            false;
 
+          setError("");
 
-          setIsAdmin(admin);
+          setUser(
+            firebaseUser
+          );
 
-
-          if (initializing) {
-            initializing = false;
-          }
+          setIsAdmin(
+            firebaseUser.uid ===
+            ADMIN_UID
+          );
 
         }
       );
 
 
-    return unsubscribe;
+    return () => {
+
+      cancelled = true;
+
+      unsubscribe();
+
+    };
 
   }, []);
 
 
 
-  /*
-    Firestore 실시간 데이터
-  */
+  /* =========================================================
+     Firestore 데이터 실시간 읽기
+  ========================================================= */
 
   useEffect(() => {
 
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
 
     let lockersLoaded = false;
+
     let membersLoaded = false;
+
     let settingsLoaded = false;
 
 
@@ -230,10 +360,51 @@ export default function App() {
     };
 
 
-
     /*
-      lockers
+      인증 계정 전환 중 발생한
+      permission-denied는 무시
     */
+
+    const handleFirestoreError =
+      (
+        label,
+        message,
+        err
+      ) => {
+
+        console.error(
+          `${label}:`,
+          err
+        );
+
+
+        if (
+          authTransitionRef.current &&
+          err?.code ===
+            "permission-denied"
+        ) {
+
+          console.warn(
+            "인증 전환 중 발생한 권한 오류이므로 무시합니다."
+          );
+
+          return;
+        }
+
+
+        setError(
+          message
+        );
+
+        setLoading(false);
+
+      };
+
+
+
+    /* ---------------------------------------------------------
+       lockers
+    --------------------------------------------------------- */
 
     const unsubscribeLockers =
       onSnapshot(
@@ -251,17 +422,22 @@ export default function App() {
           snapshot.forEach(
             document => {
 
-              result[document.id] =
+              result[
+                document.id
+              ] =
                 document.data();
 
             }
           );
 
 
-          setLockers(result);
+          setLockers(
+            result
+          );
 
 
-          lockersLoaded = true;
+          lockersLoaded =
+            true;
 
           checkLoading();
 
@@ -269,16 +445,11 @@ export default function App() {
 
         err => {
 
-          console.error(
-            "lockers error:",
+          handleFirestoreError(
+            "lockers error",
+            "사물함 데이터를 읽지 못했습니다.",
             err
           );
-
-          setError(
-            "사물함 데이터를 읽지 못했습니다."
-          );
-
-          setLoading(false);
 
         }
 
@@ -286,9 +457,9 @@ export default function App() {
 
 
 
-    /*
-      members
-    */
+    /* ---------------------------------------------------------
+       members
+    --------------------------------------------------------- */
 
     const unsubscribeMembers =
       onSnapshot(
@@ -332,10 +503,13 @@ export default function App() {
           );
 
 
-          setMembers(result);
+          setMembers(
+            result
+          );
 
 
-          membersLoaded = true;
+          membersLoaded =
+            true;
 
           checkLoading();
 
@@ -343,16 +517,11 @@ export default function App() {
 
         err => {
 
-          console.error(
-            "members error:",
+          handleFirestoreError(
+            "members error",
+            "학생 명단을 읽지 못했습니다.",
             err
           );
-
-          setError(
-            "학생 명단을 읽지 못했습니다."
-          );
-
-          setLoading(false);
 
         }
 
@@ -360,9 +529,9 @@ export default function App() {
 
 
 
-    /*
-      settings/system
-    */
+    /* ---------------------------------------------------------
+       settings/system
+    --------------------------------------------------------- */
 
     const unsubscribeSettings =
       onSnapshot(
@@ -375,7 +544,9 @@ export default function App() {
 
         snapshot => {
 
-          if (snapshot.exists()) {
+          if (
+            snapshot.exists()
+          ) {
 
             const data =
               snapshot.data();
@@ -384,7 +555,8 @@ export default function App() {
             setSettings({
 
               isLocked:
-                data.isLocked ?? false,
+                data.isLocked ??
+                false,
 
               disabledSlots:
                 Array.isArray(
@@ -398,14 +570,18 @@ export default function App() {
           } else {
 
             setSettings({
+
               isLocked: false,
+
               disabledSlots: []
+
             });
 
           }
 
 
-          settingsLoaded = true;
+          settingsLoaded =
+            true;
 
           checkLoading();
 
@@ -413,16 +589,11 @@ export default function App() {
 
         err => {
 
-          console.error(
-            "settings error:",
+          handleFirestoreError(
+            "settings error",
+            "시스템 설정을 읽지 못했습니다.",
             err
           );
-
-          setError(
-            "시스템 설정을 읽지 못했습니다."
-          );
-
-          setLoading(false);
 
         }
 
@@ -443,45 +614,51 @@ export default function App() {
 
 
 
-  /*
-    학생 명단 확인
-  */
+  /* =========================================================
+     학생 명단 확인
+  ========================================================= */
 
   const checkStudent =
-    useCallback(() => {
+    useCallback(
+      () => {
 
-      const id =
-        studentId.trim();
+        const id =
+          studentId.trim();
 
-      const name =
-        userName.trim();
-
-
-      return members.some(
-
-        member =>
-
-          member.studentId === id &&
-
-          member.name === name
-
-      );
-
-    }, [
-      studentId,
-      userName,
-      members
-    ]);
+        const name =
+          userName.trim();
 
 
+        return members.some(
 
-  /*
-    현재 입력한 학생의 사물함인지 확인
-  */
+          member =>
+
+            member.studentId ===
+              id
+
+            &&
+
+            member.name ===
+              name
+
+        );
+
+      },
+      [
+        studentId,
+        userName,
+        members
+      ]
+    );
+
+
+
+  /* =========================================================
+     현재 학생의 사물함인지 확인
+  ========================================================= */
 
   const isMyLocker =
     useCallback(
-
       locker => {
 
         if (
@@ -507,20 +684,18 @@ export default function App() {
         );
 
       },
-
       [
         studentId,
         userName,
         studentAuthenticated
       ]
-
     );
 
 
 
-  /*
-    학생 인증
-  */
+  /* =========================================================
+     학생 인증
+  ========================================================= */
 
   function authenticateStudent() {
 
@@ -538,9 +713,13 @@ export default function App() {
     }
 
 
-    if (!checkStudent()) {
+    if (
+      !checkStudent()
+    ) {
 
-      setStudentAuthenticated(false);
+      setStudentAuthenticated(
+        false
+      );
 
       showToast(
         "등록되지 않은 학생입니다.",
@@ -551,7 +730,9 @@ export default function App() {
     }
 
 
-    setStudentAuthenticated(true);
+    setStudentAuthenticated(
+      true
+    );
 
 
     showToast(
@@ -563,9 +744,9 @@ export default function App() {
 
 
 
-  /*
-    관리자 로그인
-  */
+  /* =========================================================
+     관리자 로그인
+  ========================================================= */
 
   async function adminLogin() {
 
@@ -585,6 +766,20 @@ export default function App() {
 
     try {
 
+      /*
+        기존 익명 Firestore listener를 먼저 정리
+      */
+
+      authTransitionRef.current =
+        true;
+
+      setLoading(true);
+
+      setError("");
+
+      setUser(null);
+
+
       const result =
         await signInWithEmailAndPassword(
           auth,
@@ -594,8 +789,8 @@ export default function App() {
 
 
       /*
-        이메일/비밀번호 로그인이 성공해도
-        등록한 관리자 UID가 아니면 차단
+        이메일/비밀번호가 맞아도
+        지정된 UID가 아니라면 관리자 아님
       */
 
       if (
@@ -603,14 +798,10 @@ export default function App() {
         ADMIN_UID
       ) {
 
-        await signOut(auth);
-
-        await signInAnonymously(
+        await signOut(
           auth
         );
 
-
-        setIsAdmin(false);
 
         showToast(
           "관리자 계정이 아닙니다.",
@@ -620,8 +811,6 @@ export default function App() {
         return;
       }
 
-
-      setIsAdmin(true);
 
       setAdminEmail("");
 
@@ -642,7 +831,45 @@ export default function App() {
       );
 
 
-      setIsAdmin(false);
+      authTransitionRef.current =
+        false;
+
+
+      /*
+        로그인 실패 시 기존 익명 계정이
+        아직 살아있다면 다시 연결
+      */
+
+      if (
+        auth.currentUser
+      ) {
+
+        setUser(
+          auth.currentUser
+        );
+
+      } else {
+
+        try {
+
+          await signInAnonymously(
+            auth
+          );
+
+        } catch (
+          anonymousError
+        ) {
+
+          console.error(
+            anonymousError
+          );
+
+        }
+
+      }
+
+
+      setLoading(false);
 
 
       showToast(
@@ -656,27 +883,38 @@ export default function App() {
 
 
 
-  /*
-    관리자 로그아웃
+  /* =========================================================
+     관리자 로그아웃
 
-    로그아웃 후 다시 Anonymous 로그인
-  */
+     핵심:
+     여기서 직접 signInAnonymously 하지 않음.
+
+     signOut 후 onAuthStateChanged가
+     알아서 익명 로그인 수행.
+  ========================================================= */
 
   async function adminLogout() {
 
     try {
 
-      await signOut(auth);
+      authTransitionRef.current =
+        true;
 
-      await signInAnonymously(
-        auth
-      );
+      setLoading(true);
 
+      setError("");
+
+      setUser(null);
 
       setIsAdmin(false);
 
       setAdminMode(
         "normal"
+      );
+
+
+      await signOut(
+        auth
       );
 
 
@@ -694,6 +932,12 @@ export default function App() {
       );
 
 
+      authTransitionRef.current =
+        false;
+
+      setLoading(false);
+
+
       showToast(
         "로그아웃에 실패했습니다.",
         "error"
@@ -705,21 +949,23 @@ export default function App() {
 
 
 
-  /*
-    사물함 클릭
-  */
+  /* =========================================================
+     사물함 클릭
+  ========================================================= */
 
   async function handleLockerClick(
     lockerId
   ) {
 
-    /*
-      관리자 차단 모드
-    */
+
+    /* ---------------------------------------------------------
+       관리자 차단 모드
+    --------------------------------------------------------- */
 
     if (
       isAdmin &&
-      adminMode === "block"
+      adminMode ===
+        "block"
     ) {
 
       try {
@@ -735,7 +981,8 @@ export default function App() {
 
             ? current.filter(
                 id =>
-                  id !== lockerId
+                  id !==
+                  lockerId
               )
 
             : [
@@ -776,7 +1023,10 @@ export default function App() {
 
       } catch (err) {
 
-        console.error(err);
+        console.error(
+          err
+        );
+
 
         showToast(
           "차단 설정 실패",
@@ -792,17 +1042,21 @@ export default function App() {
 
 
     const locker =
-      lockers[lockerId];
+      lockers[
+        lockerId
+      ];
 
 
     const mine =
-      isMyLocker(locker);
+      isMyLocker(
+        locker
+      );
 
 
 
-    /*
-      시스템 전체 잠금
-    */
+    /* ---------------------------------------------------------
+       시스템 잠금
+    --------------------------------------------------------- */
 
     if (
       settings.isLocked &&
@@ -819,9 +1073,9 @@ export default function App() {
 
 
 
-    /*
-      이미 예약된 사물함
-    */
+    /* ---------------------------------------------------------
+       이미 예약된 자리
+    --------------------------------------------------------- */
 
     if (locker) {
 
@@ -833,12 +1087,14 @@ export default function App() {
         setConfirmModal({
 
           title:
-            isAdmin && !mine
+            isAdmin &&
+            !mine
               ? "관리자 강제 취소"
               : "예약 취소",
 
           message:
-            isAdmin && !mine
+            isAdmin &&
+            !mine
 
               ? `${locker.studentId} ${locker.name} 학생의 예약을 삭제하시겠습니까?`
 
@@ -868,7 +1124,10 @@ export default function App() {
 
               } catch (err) {
 
-                console.error(err);
+                console.error(
+                  err
+                );
+
 
                 showToast(
                   "예약 취소 실패",
@@ -902,9 +1161,9 @@ export default function App() {
 
 
 
-    /*
-      차단 자리
-    */
+    /* ---------------------------------------------------------
+       차단 자리
+    --------------------------------------------------------- */
 
     if (
       settings.disabledSlots.includes(
@@ -922,9 +1181,9 @@ export default function App() {
 
 
 
-    /*
-      학생 인증 여부
-    */
+    /* ---------------------------------------------------------
+       학생 인증 여부
+    --------------------------------------------------------- */
 
     if (
       !studentAuthenticated
@@ -940,11 +1199,14 @@ export default function App() {
 
 
 
-    if (!checkStudent()) {
+    if (
+      !checkStudent()
+    ) {
 
       setStudentAuthenticated(
         false
       );
+
 
       showToast(
         "학생 인증 정보가 올바르지 않습니다.",
@@ -956,9 +1218,9 @@ export default function App() {
 
 
 
-    /*
-      한 학생당 하나만 예약
-    */
+    /* ---------------------------------------------------------
+       한 명당 하나만 예약
+    --------------------------------------------------------- */
 
     const alreadyReserved =
       Object.values(
@@ -973,7 +1235,9 @@ export default function App() {
       );
 
 
-    if (alreadyReserved) {
+    if (
+      alreadyReserved
+    ) {
 
       showToast(
         "이미 예약한 사물함이 있습니다.",
@@ -985,9 +1249,9 @@ export default function App() {
 
 
 
-    /*
-      예약 생성
-    */
+    /* ---------------------------------------------------------
+       예약 생성
+    --------------------------------------------------------- */
 
     try {
 
@@ -1043,9 +1307,9 @@ export default function App() {
 
 
 
-  /*
-    학생 정보 초기화
-  */
+  /* =========================================================
+     학생 입력 초기화
+  ========================================================= */
 
   function resetStudent() {
 
@@ -1066,13 +1330,15 @@ export default function App() {
 
 
 
-  /*
-    학생 명단 추가
-  */
+  /* =========================================================
+     학생 개별 추가
+  ========================================================= */
 
   async function addMember() {
 
-    if (!isAdmin) {
+    if (
+      !isAdmin
+    ) {
 
       showToast(
         "관리자 권한이 필요합니다.",
@@ -1090,7 +1356,10 @@ export default function App() {
       adminStudentName.trim();
 
 
-    if (!id || !name) {
+    if (
+      !id ||
+      !name
+    ) {
 
       showToast(
         "학번과 이름을 입력해주세요.",
@@ -1104,7 +1373,8 @@ export default function App() {
     if (
       members.some(
         member =>
-          member.studentId === id
+          member.studentId ===
+          id
       )
     ) {
 
@@ -1147,7 +1417,10 @@ export default function App() {
 
     } catch (err) {
 
-      console.error(err);
+      console.error(
+        err
+      );
+
 
       showToast(
         "학생 추가 실패",
@@ -1160,15 +1433,295 @@ export default function App() {
 
 
 
-  /*
-    학생 명단 삭제
-  */
+  /* =========================================================
+     학생 일괄 추가
+
+     Google Sheets에서
+
+     학번 | 이름
+
+     두 열을 선택해서 그대로 복붙 가능.
+  ========================================================= */
+
+  async function addBulkMembers() {
+
+    if (
+      !isAdmin
+    ) {
+
+      showToast(
+        "관리자 권한이 필요합니다.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    const raw =
+      bulkMembers.trim();
+
+
+    if (!raw) {
+
+      showToast(
+        "학생 명단을 붙여넣어 주세요.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    /*
+      한 줄씩 분리
+    */
+
+    const lines =
+      raw
+        .split(/\r?\n/)
+        .map(
+          line =>
+            line.trim()
+        )
+        .filter(Boolean);
+
+
+    const parsed = [];
+
+
+    for (
+      const line
+      of lines
+    ) {
+
+      /*
+        Google Sheets 복사 시
+        열 사이가 탭(\t)으로 들어옴.
+
+        혹시 CSV 형태로 넣어도
+        어느 정도 처리하도록 comma도 지원.
+      */
+
+      let parts =
+        line.split("\t");
+
+
+      if (
+        parts.length < 2
+      ) {
+
+        parts =
+          line.split(",");
+
+      }
+
+
+      if (
+        parts.length < 2
+      ) {
+
+        continue;
+      }
+
+
+      const id =
+        parts[0]
+          .trim();
+
+      const name =
+        parts[1]
+          .trim();
+
+
+      /*
+        첫 줄에
+        "학번 이름"
+        헤더가 포함된 경우 자동 무시
+      */
+
+      const normalizedId =
+        id
+          .replace(/\s/g, "")
+          .toLowerCase();
+
+
+      if (
+        normalizedId ===
+          "학번"
+
+        ||
+
+        normalizedId ===
+          "studentid"
+
+        ||
+
+        normalizedId ===
+          "student_id"
+      ) {
+
+        continue;
+      }
+
+
+      if (
+        !id ||
+        !name
+      ) {
+
+        continue;
+      }
+
+
+      parsed.push({
+        id,
+        name
+      });
+
+    }
+
+
+
+    /*
+      같은 학번이 여러 번 들어간 경우
+      마지막 값만 사용
+    */
+
+    const uniqueMap =
+      new Map();
+
+
+    parsed.forEach(
+      item => {
+
+        uniqueMap.set(
+          item.id,
+          item
+        );
+
+      }
+    );
+
+
+    const uniqueMembers =
+      Array.from(
+        uniqueMap.values()
+      );
+
+
+    if (
+      uniqueMembers.length ===
+      0
+    ) {
+
+      showToast(
+        "등록할 수 있는 학번/이름 데이터가 없습니다.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    try {
+
+      /*
+        Firestore batch는 한 번에
+        너무 많은 write를 넣지 않도록
+        400명씩 나눠 처리.
+      */
+
+      const CHUNK_SIZE =
+        400;
+
+
+      for (
+        let i = 0;
+        i <
+        uniqueMembers.length;
+        i += CHUNK_SIZE
+      ) {
+
+        const chunk =
+          uniqueMembers.slice(
+            i,
+            i + CHUNK_SIZE
+          );
+
+
+        const batch =
+          writeBatch(
+            db
+          );
+
+
+        chunk.forEach(
+          member => {
+
+            batch.set(
+
+              doc(
+                db,
+                "members",
+                member.id
+              ),
+
+              {
+                name:
+                  member.name
+              }
+
+            );
+
+          }
+        );
+
+
+        await batch.commit();
+
+      }
+
+
+      setBulkMembers("");
+
+
+      showToast(
+        `${uniqueMembers.length}명 일괄 등록 완료`,
+        "success"
+      );
+
+
+    } catch (err) {
+
+      console.error(
+        "일괄 등록 오류:",
+        err
+      );
+
+
+      showToast(
+        "학생 명단 일괄 등록에 실패했습니다.",
+        "error"
+      );
+
+    }
+
+  }
+
+
+
+  /* =========================================================
+     학생 삭제
+  ========================================================= */
 
   async function removeMember(
     studentIdToRemove
   ) {
 
-    if (!isAdmin) {
+    if (
+      !isAdmin
+    ) {
 
       showToast(
         "관리자 권한이 필요합니다.",
@@ -1200,7 +1753,10 @@ export default function App() {
 
     } catch (err) {
 
-      console.error(err);
+      console.error(
+        err
+      );
+
 
       showToast(
         "학생 삭제 실패",
@@ -1213,13 +1769,15 @@ export default function App() {
 
 
 
-  /*
-    예약 시스템 잠금
-  */
+  /* =========================================================
+     시스템 잠금
+  ========================================================= */
 
   async function toggleSystemLock() {
 
-    if (!isAdmin) {
+    if (
+      !isAdmin
+    ) {
 
       showToast(
         "관리자 권한이 필요합니다.",
@@ -1262,7 +1820,10 @@ export default function App() {
 
     } catch (err) {
 
-      console.error(err);
+      console.error(
+        err
+      );
+
 
       showToast(
         "시스템 설정 실패",
@@ -1275,13 +1836,15 @@ export default function App() {
 
 
 
-  /*
-    전체 예약 삭제
-  */
+  /* =========================================================
+     전체 예약 초기화
+  ========================================================= */
 
   async function resetAllLockers() {
 
-    if (!isAdmin) {
+    if (
+      !isAdmin
+    ) {
 
       showToast(
         "관리자 권한이 필요합니다.",
@@ -1316,7 +1879,9 @@ export default function App() {
 
 
       const batch =
-        writeBatch(db);
+        writeBatch(
+          db
+        );
 
 
       snapshot.forEach(
@@ -1341,7 +1906,10 @@ export default function App() {
 
     } catch (err) {
 
-      console.error(err);
+      console.error(
+        err
+      );
+
 
       showToast(
         "예약 초기화 실패",
@@ -1354,11 +1922,20 @@ export default function App() {
 
 
 
+  /* =========================================================
+     Loading
+  ========================================================= */
+
   if (loading) {
 
     return (
 
-      <div className="center-page loading-text">
+      <div
+        className="
+          center-page
+          loading-text
+        "
+      >
         데이터 로딩 중...
       </div>
 
@@ -1368,11 +1945,20 @@ export default function App() {
 
 
 
+  /* =========================================================
+     Error
+  ========================================================= */
+
   if (error) {
 
     return (
 
-      <div className="center-page error-text">
+      <div
+        className="
+          center-page
+          error-text
+        "
+      >
 
         <AlertCircle />
 
@@ -1386,12 +1972,18 @@ export default function App() {
 
 
 
+  /* =========================================================
+     UI
+  ========================================================= */
+
   return (
 
     <div className="app">
 
 
-      {/* Toast */}
+      {/* =====================================================
+          Toast
+      ===================================================== */}
 
       {toast && (
 
@@ -1402,11 +1994,20 @@ export default function App() {
         >
 
           {
-            toast.type === "error"
+            toast.type ===
+            "error"
 
-              ? <AlertCircle size={19} />
+              ? (
+                <AlertCircle
+                  size={19}
+                />
+              )
 
-              : <CheckCircle size={19} />
+              : (
+                <CheckCircle
+                  size={19}
+                />
+              )
           }
 
           {toast.message}
@@ -1417,7 +2018,9 @@ export default function App() {
 
 
 
-      {/* 확인창 */}
+      {/* =====================================================
+          Confirm Modal
+      ===================================================== */}
 
       {confirmModal && (
 
@@ -1426,11 +2029,15 @@ export default function App() {
           <div className="modal">
 
             <h2>
-              {confirmModal.title}
+              {
+                confirmModal.title
+              }
             </h2>
 
             <p>
-              {confirmModal.message}
+              {
+                confirmModal.message
+              }
             </p>
 
             <div className="modal-buttons">
@@ -1445,6 +2052,7 @@ export default function App() {
               >
                 취소
               </button>
+
 
               <button
                 className="primary-button"
@@ -1465,15 +2073,22 @@ export default function App() {
 
 
 
-      {/* 상단바 */}
+      {/* =====================================================
+          Navbar
+      ===================================================== */}
 
       <header className="navbar">
 
         <div className="brand">
 
           <div className="brand-icon">
-            <ShieldCheck size={22} />
+
+            <ShieldCheck
+              size={22}
+            />
+
           </div>
+
 
           <strong>
             DS 사물함 예약 시스템
@@ -1500,14 +2115,19 @@ export default function App() {
         </div>
 
 
+
         <div className="nav-actions">
 
           <button
             className="student-reset-button"
-            onClick={resetStudent}
+            onClick={
+              resetStudent
+            }
           >
 
-            <UserPlus size={15} />
+            <UserPlus
+              size={15}
+            />
 
             다른 학생으로 예약
 
@@ -1523,7 +2143,9 @@ export default function App() {
             }
           >
 
-            <Settings size={21} />
+            <Settings
+              size={21}
+            />
 
           </button>
 
@@ -1536,7 +2158,9 @@ export default function App() {
       <main className="main-content">
 
 
-        {/* 관리자 영역 */}
+        {/* ===================================================
+            관리자 패널
+        =================================================== */}
 
         {showAdminPanel && (
 
@@ -1546,11 +2170,14 @@ export default function App() {
 
               <div className="admin-title">
 
-                <Lock size={17} />
+                <Lock
+                  size={17}
+                />
 
                 ADMIN MODE
 
               </div>
+
 
 
               {!isAdmin ? (
@@ -1559,7 +2186,9 @@ export default function App() {
 
                   <input
                     type="email"
-                    value={adminEmail}
+                    value={
+                      adminEmail
+                    }
                     onChange={
                       event =>
                         setAdminEmail(
@@ -1572,7 +2201,9 @@ export default function App() {
 
                   <input
                     type="password"
-                    value={adminPassword}
+                    value={
+                      adminPassword
+                    }
                     onChange={
                       event =>
                         setAdminPassword(
@@ -1616,7 +2247,9 @@ export default function App() {
                   }
                 >
 
-                  <LogOut size={14} />
+                  <LogOut
+                    size={14}
+                  />
 
                   Logout
 
@@ -1633,13 +2266,17 @@ export default function App() {
               <div className="admin-grid">
 
 
-                {/* 학생 추가 */}
+                {/* ===========================================
+                    학생 등록
+                =========================================== */}
 
                 <div className="admin-card">
 
                   <h3>
 
-                    <UserPlus size={16} />
+                    <UserPlus
+                      size={16}
+                    />
 
                     학생 명단 등록
 
@@ -1680,22 +2317,137 @@ export default function App() {
                       addMember
                     }
                   >
-                    명단 추가
+                    개별 추가
                   </button>
+
+
+
+                  {/* =========================================
+                      Google Sheets 일괄 등록
+                  ========================================= */}
+
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      paddingTop: "14px",
+                      borderTop:
+                        "1px solid #334155"
+                    }}
+                  >
+
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                        color: "#93c5fd",
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        marginBottom: "8px"
+                      }}
+                    >
+
+                      <ClipboardPaste
+                        size={15}
+                      />
+
+                      Google Sheets 일괄 등록
+
+                    </div>
+
+
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        fontSize: "10px",
+                        lineHeight: 1.5,
+                        margin:
+                          "0 0 8px",
+                        textAlign:
+                          "center"
+                      }}
+                    >
+
+                      학번과 이름 두 열을
+                      Google Sheets에서 복사한 뒤
+                      그대로 붙여넣으세요.
+
+                    </p>
+
+
+                    <textarea
+                      value={
+                        bulkMembers
+                      }
+                      onChange={
+                        event =>
+                          setBulkMembers(
+                            event.target.value
+                          )
+                      }
+                      placeholder={
+`12230001	홍길동
+12230002	김철수
+12230003	이영희`
+                      }
+                      rows={8}
+                      style={{
+                        width: "100%",
+                        resize:
+                          "vertical",
+                        padding: "10px",
+                        borderRadius:
+                          "10px",
+                        background:
+                          "#020617",
+                        color: "white",
+                        border:
+                          "1px solid #334155",
+                        outline:
+                          "none",
+                        fontSize:
+                          "11px",
+                        lineHeight:
+                          1.6
+                      }}
+                    />
+
+
+                    <button
+                      className="admin-blue-button"
+                      onClick={
+                        addBulkMembers
+                      }
+                      style={{
+                        width: "100%",
+                        marginTop:
+                          "8px"
+                      }}
+                    >
+                      명단 일괄 등록
+                    </button>
+
+                  </div>
 
                 </div>
 
 
 
-                {/* 학생 명단 */}
+                {/* ===========================================
+                    등록 명단
+                =========================================== */}
 
                 <div className="admin-card">
 
                   <h3>
 
-                    <Users size={16} />
+                    <Users
+                      size={16}
+                    />
 
-                    등록 명단 ({members.length}명)
+                    등록 명단 (
+                    {members.length}명)
 
                   </h3>
 
@@ -1737,7 +2489,9 @@ export default function App() {
                             }
                           >
 
-                            <Trash2 size={15} />
+                            <Trash2
+                              size={15}
+                            />
 
                           </button>
 
@@ -1752,7 +2506,9 @@ export default function App() {
 
 
 
-                {/* 관리자 제어 */}
+                {/* ===========================================
+                    시스템 제어
+                =========================================== */}
 
                 <div className="admin-card">
 
@@ -1774,8 +2530,18 @@ export default function App() {
 
                     {
                       settings.isLocked
-                        ? <Unlock size={17} />
-                        : <Lock size={17} />
+
+                        ? (
+                          <Unlock
+                            size={17}
+                          />
+                        )
+
+                        : (
+                          <Lock
+                            size={17}
+                          />
+                        )
                     }
 
                     {
@@ -1826,7 +2592,6 @@ export default function App() {
                   </div>
 
 
-
                   <button
                     className="reset-button"
                     onClick={
@@ -1848,7 +2613,9 @@ export default function App() {
 
 
 
-        {/* 학생 인증 */}
+        {/* ===================================================
+            학생 인증
+        =================================================== */}
 
         <section className="student-panel">
 
@@ -1862,10 +2629,14 @@ export default function App() {
 
             <div className="input-wrapper">
 
-              <Hash size={21} />
+              <Hash
+                size={21}
+              />
 
               <input
-                value={studentId}
+                value={
+                  studentId
+                }
                 onChange={
                   event => {
 
@@ -1888,10 +2659,14 @@ export default function App() {
 
             <div className="input-wrapper">
 
-              <User size={21} />
+              <User
+                size={21}
+              />
 
               <input
-                value={userName}
+                value={
+                  userName
+                }
                 onChange={
                   event => {
 
@@ -1924,13 +2699,18 @@ export default function App() {
           </div>
 
 
+
           {studentAuthenticated && (
 
             <div className="auth-success">
 
-              <CheckCircle size={17} />
+              <CheckCircle
+                size={17}
+              />
 
-              {studentId} {userName} 인증 완료
+              {studentId} {userName}
+              {" "}
+              인증 완료
 
             </div>
 
@@ -1940,11 +2720,14 @@ export default function App() {
 
 
 
-        {/* 사물함 */}
+        {/* ===================================================
+            사물함
+        =================================================== */}
 
         <section
           className={
-            adminMode === "block" &&
+            adminMode ===
+              "block" &&
             isAdmin
 
               ? "locker-wrapper block-mode"
@@ -1955,6 +2738,9 @@ export default function App() {
 
           <div className="locker-grid-container">
 
+
+            {/* 열 번호 */}
+
             <div className="column-labels">
 
               <div className="row-placeholder" />
@@ -1964,7 +2750,9 @@ export default function App() {
 
                   <div
                     className="column-label"
-                    key={column}
+                    key={
+                      column
+                    }
                   >
                     {column}열
                   </div>
@@ -1975,17 +2763,23 @@ export default function App() {
             </div>
 
 
+
+            {/* 사물함 행 */}
+
             {ROWS.map(
               row => (
 
                 <div
                   className="locker-row"
-                  key={row}
+                  key={
+                    row
+                  }
                 >
 
                   <div className="row-label">
                     {row}
                   </div>
+
 
 
                   {COLS.map(
@@ -1994,36 +2788,46 @@ export default function App() {
                       const lockerId =
                         `${row}${column}`;
 
+
                       const locker =
                         lockers[
                           lockerId
                         ];
+
 
                       const mine =
                         isMyLocker(
                           locker
                         );
 
+
                       const disabled =
                         settings.disabledSlots.includes(
                           lockerId
                         );
 
+
                       let className =
                         "locker-cell";
 
 
-                      if (disabled) {
+                      if (
+                        disabled
+                      ) {
 
                         className +=
                           " locker-disabled";
 
-                      } else if (mine) {
+                      } else if (
+                        mine
+                      ) {
 
                         className +=
                           " locker-mine";
 
-                      } else if (locker) {
+                      } else if (
+                        locker
+                      ) {
 
                         className +=
                           " locker-occupied";
@@ -2056,7 +2860,9 @@ export default function App() {
 
                             <>
 
-                              <Ban size={25} />
+                              <Ban
+                                size={25}
+                              />
 
                               <span>
                                 사용 불가
@@ -2068,7 +2874,9 @@ export default function App() {
 
                             <>
 
-                              <CheckCircle size={22} />
+                              <CheckCircle
+                                size={22}
+                              />
 
                               <strong>
                                 {
@@ -2082,7 +2890,9 @@ export default function App() {
 
                             <>
 
-                              <Lock size={19} />
+                              <Lock
+                                size={19}
+                              />
 
                               <strong>
 
@@ -2115,10 +2925,14 @@ export default function App() {
 
                             <>
 
-                              <Unlock size={18} />
+                              <Unlock
+                                size={18}
+                              />
 
                               <strong>
-                                {lockerId}
+                                {
+                                  lockerId
+                                }
                               </strong>
 
                             </>
@@ -2143,28 +2957,45 @@ export default function App() {
 
 
 
-        {/* 범례 */}
+        {/* ===================================================
+            범례
+        =================================================== */}
 
         <div className="legend">
 
           <span>
+
             <i className="legend-empty" />
+
             빈 자리
+
           </span>
 
+
           <span>
+
             <i className="legend-mine" />
+
             내 사물함
+
           </span>
 
+
           <span>
+
             <i className="legend-occupied" />
+
             예약 완료
+
           </span>
 
+
           <span>
+
             <i className="legend-disabled" />
+
             사용 불가
+
           </span>
 
         </div>
