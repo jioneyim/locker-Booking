@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Hash,
   Lock,
+  LogOut,
   Settings,
   ShieldCheck,
   Trash2,
@@ -21,7 +22,9 @@ import {
 
 import {
   onAuthStateChanged,
-  signInAnonymously
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut
 } from "firebase/auth";
 
 import {
@@ -37,6 +40,8 @@ import {
 import { auth, db } from "./firebase";
 
 
+const ADMIN_UID = "5Ilq7bZIM1UjtvsWFSYhrO4fFq32";
+
 const ROWS = ["A", "B", "C", "D", "E"];
 
 const COLS = Array.from(
@@ -49,14 +54,15 @@ export default function App() {
 
   const [user, setUser] = useState(null);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [lockers, setLockers] = useState({});
 
   const [members, setMembers] = useState([]);
 
   const [settings, setSettings] = useState({
     isLocked: false,
-    disabledSlots: [],
-    adminCode: "admin123"
+    disabledSlots: []
   });
 
 
@@ -82,18 +88,16 @@ export default function App() {
   const [showAdminPanel, setShowAdminPanel] =
     useState(false);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] =
+    useState("");
 
-  const [adminInput, setAdminInput] =
+  const [adminPassword, setAdminPassword] =
     useState("");
 
   const [adminStudentId, setAdminStudentId] =
     useState("");
 
   const [adminStudentName, setAdminStudentName] =
-    useState("");
-
-  const [newAdminCode, setNewAdminCode] =
     useState("");
 
   const [adminMode, setAdminMode] =
@@ -113,6 +117,7 @@ export default function App() {
         () => setToast(null),
         3000
       );
+
     },
     []
   );
@@ -120,49 +125,74 @@ export default function App() {
 
 
   /*
-    Firebase Anonymous Authentication
+    Firebase Authentication
+
+    일반 사용자:
+    Anonymous
+
+    관리자:
+    Email / Password
   */
 
   useEffect(() => {
 
+    let initializing = true;
+
+
     const unsubscribe =
       onAuthStateChanged(
         auth,
-        firebaseUser => {
+        async firebaseUser => {
+
+          /*
+            로그인된 사용자가 없는 경우
+            자동으로 익명 로그인
+          */
+
+          if (!firebaseUser) {
+
+            try {
+
+              await signInAnonymously(auth);
+
+            } catch (err) {
+
+              console.error(
+                "Anonymous authentication error:",
+                err
+              );
+
+              setError(
+                "Firebase 인증에 실패했습니다."
+              );
+
+              setLoading(false);
+            }
+
+            return;
+          }
+
 
           setUser(firebaseUser);
 
+
+          /*
+            Firebase UID로 실제 관리자 여부 판별
+          */
+
+          const admin =
+            firebaseUser.uid === ADMIN_UID;
+
+
+          setIsAdmin(admin);
+
+
+          if (initializing) {
+            initializing = false;
+          }
+
         }
       );
-
-
-    async function login() {
-
-      try {
-
-        if (!auth.currentUser) {
-
-          await signInAnonymously(auth);
-
-        }
-
-      } catch (err) {
-
-        console.error(
-          "Anonymous authentication error:",
-          err
-        );
-
-        setError(
-          "Firebase 인증에 실패했습니다."
-        );
-
-        setLoading(false);
-      }
-    }
-
-
-    login();
 
 
     return unsubscribe;
@@ -172,7 +202,7 @@ export default function App() {
 
 
   /*
-    Firestore realtime listeners
+    Firestore 실시간 데이터
   */
 
   useEffect(() => {
@@ -198,6 +228,7 @@ export default function App() {
       }
 
     };
+
 
 
     /*
@@ -227,13 +258,8 @@ export default function App() {
           );
 
 
-          console.log(
-            "lockers:",
-            result
-          );
-
-
           setLockers(result);
+
 
           lockersLoaded = true;
 
@@ -306,13 +332,8 @@ export default function App() {
           );
 
 
-          console.log(
-            "members:",
-            result
-          );
-
-
           setMembers(result);
+
 
           membersLoaded = true;
 
@@ -370,11 +391,7 @@ export default function App() {
                   data.disabledSlots
                 )
                   ? data.disabledSlots
-                  : [],
-
-              adminCode:
-                data.adminCode ||
-                "admin123"
+                  : []
 
             });
 
@@ -382,8 +399,7 @@ export default function App() {
 
             setSettings({
               isLocked: false,
-              disabledSlots: [],
-              adminCode: "admin123"
+              disabledSlots: []
             });
 
           }
@@ -416,7 +432,9 @@ export default function App() {
     return () => {
 
       unsubscribeLockers();
+
       unsubscribeMembers();
+
       unsubscribeSettings();
 
     };
@@ -426,7 +444,7 @@ export default function App() {
 
 
   /*
-    Student validation
+    학생 명단 확인
   */
 
   const checkStudent =
@@ -458,7 +476,7 @@ export default function App() {
 
 
   /*
-    Check if selected locker is mine
+    현재 입력한 학생의 사물함인지 확인
   */
 
   const isMyLocker =
@@ -501,7 +519,7 @@ export default function App() {
 
 
   /*
-    Student Login
+    학생 인증
   */
 
   function authenticateStudent() {
@@ -540,12 +558,155 @@ export default function App() {
       "인증되었습니다. 사물함을 선택하세요.",
       "success"
     );
+
   }
 
 
 
   /*
-    Locker click
+    관리자 로그인
+  */
+
+  async function adminLogin() {
+
+    if (
+      !adminEmail.trim() ||
+      !adminPassword
+    ) {
+
+      showToast(
+        "관리자 이메일과 비밀번호를 입력해주세요.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    try {
+
+      const result =
+        await signInWithEmailAndPassword(
+          auth,
+          adminEmail.trim(),
+          adminPassword
+        );
+
+
+      /*
+        이메일/비밀번호 로그인이 성공해도
+        등록한 관리자 UID가 아니면 차단
+      */
+
+      if (
+        result.user.uid !==
+        ADMIN_UID
+      ) {
+
+        await signOut(auth);
+
+        await signInAnonymously(
+          auth
+        );
+
+
+        setIsAdmin(false);
+
+        showToast(
+          "관리자 계정이 아닙니다.",
+          "error"
+        );
+
+        return;
+      }
+
+
+      setIsAdmin(true);
+
+      setAdminEmail("");
+
+      setAdminPassword("");
+
+
+      showToast(
+        "관리자 인증 완료",
+        "success"
+      );
+
+
+    } catch (err) {
+
+      console.error(
+        "관리자 로그인 오류:",
+        err
+      );
+
+
+      setIsAdmin(false);
+
+
+      showToast(
+        "관리자 이메일 또는 비밀번호가 올바르지 않습니다.",
+        "error"
+      );
+
+    }
+
+  }
+
+
+
+  /*
+    관리자 로그아웃
+
+    로그아웃 후 다시 Anonymous 로그인
+  */
+
+  async function adminLogout() {
+
+    try {
+
+      await signOut(auth);
+
+      await signInAnonymously(
+        auth
+      );
+
+
+      setIsAdmin(false);
+
+      setAdminMode(
+        "normal"
+      );
+
+
+      showToast(
+        "관리자 로그아웃 완료",
+        "success"
+      );
+
+
+    } catch (err) {
+
+      console.error(
+        "관리자 로그아웃 오류:",
+        err
+      );
+
+
+      showToast(
+        "로그아웃에 실패했습니다.",
+        "error"
+      );
+
+    }
+
+  }
+
+
+
+  /*
+    사물함 클릭
   */
 
   async function handleLockerClick(
@@ -553,7 +714,7 @@ export default function App() {
   ) {
 
     /*
-      ADMIN BLOCK MODE
+      관리자 차단 모드
     */
 
     if (
@@ -612,6 +773,7 @@ export default function App() {
           "success"
         );
 
+
       } catch (err) {
 
         console.error(err);
@@ -639,7 +801,7 @@ export default function App() {
 
 
     /*
-      SYSTEM LOCK
+      시스템 전체 잠금
     */
 
     if (
@@ -658,7 +820,7 @@ export default function App() {
 
 
     /*
-      Existing locker
+      이미 예약된 사물함
     */
 
     if (locker) {
@@ -703,6 +865,7 @@ export default function App() {
                   "success"
                 );
 
+
               } catch (err) {
 
                 console.error(err);
@@ -718,9 +881,11 @@ export default function App() {
               setConfirmModal(
                 null
               );
+
             }
 
         });
+
 
       } else {
 
@@ -738,7 +903,7 @@ export default function App() {
 
 
     /*
-      Disabled locker
+      차단 자리
     */
 
     if (
@@ -758,7 +923,7 @@ export default function App() {
 
 
     /*
-      Student authentication
+      학생 인증 여부
     */
 
     if (
@@ -792,7 +957,7 @@ export default function App() {
 
 
     /*
-      One locker per student
+      한 학생당 하나만 예약
     */
 
     const alreadyReserved =
@@ -821,7 +986,7 @@ export default function App() {
 
 
     /*
-      Reserve
+      예약 생성
     */
 
     try {
@@ -858,12 +1023,14 @@ export default function App() {
         "success"
       );
 
+
     } catch (err) {
 
       console.error(
         "reservation error:",
         err
       );
+
 
       showToast(
         "예약에 실패했습니다.",
@@ -877,7 +1044,7 @@ export default function App() {
 
 
   /*
-    Reset student
+    학생 정보 초기화
   */
 
   function resetStudent() {
@@ -890,50 +1057,31 @@ export default function App() {
       false
     );
 
+
     showToast(
       "학생 정보를 초기화했습니다."
     );
+
   }
 
 
 
   /*
-    Admin Login
+    학생 명단 추가
   */
 
-  function adminLogin() {
+  async function addMember() {
 
-    if (
-      adminInput ===
-      settings.adminCode
-    ) {
-
-      setIsAdmin(true);
-
-      setAdminInput("");
+    if (!isAdmin) {
 
       showToast(
-        "관리자 인증 완료",
-        "success"
+        "관리자 권한이 필요합니다.",
+        "error"
       );
 
       return;
     }
 
-
-    showToast(
-      "관리자 비밀번호가 일치하지 않습니다.",
-      "error"
-    );
-  }
-
-
-
-  /*
-    Add member
-  */
-
-  async function addMember() {
 
     const id =
       adminStudentId.trim();
@@ -996,6 +1144,7 @@ export default function App() {
         "success"
       );
 
+
     } catch (err) {
 
       console.error(err);
@@ -1012,12 +1161,23 @@ export default function App() {
 
 
   /*
-    Remove member
+    학생 명단 삭제
   */
 
   async function removeMember(
     studentIdToRemove
   ) {
+
+    if (!isAdmin) {
+
+      showToast(
+        "관리자 권한이 필요합니다.",
+        "error"
+      );
+
+      return;
+    }
+
 
     try {
 
@@ -1037,6 +1197,7 @@ export default function App() {
         "success"
       );
 
+
     } catch (err) {
 
       console.error(err);
@@ -1053,10 +1214,21 @@ export default function App() {
 
 
   /*
-    System Lock
+    예약 시스템 잠금
   */
 
   async function toggleSystemLock() {
+
+    if (!isAdmin) {
+
+      showToast(
+        "관리자 권한이 필요합니다.",
+        "error"
+      );
+
+      return;
+    }
+
 
     try {
 
@@ -1087,6 +1259,7 @@ export default function App() {
         "success"
       );
 
+
     } catch (err) {
 
       console.error(err);
@@ -1103,76 +1276,21 @@ export default function App() {
 
 
   /*
-    Change Admin Password
+    전체 예약 삭제
   */
 
-  async function changeAdminCode() {
+  async function resetAllLockers() {
 
-    const code =
-      newAdminCode.trim();
-
-
-    if (!code) {
+    if (!isAdmin) {
 
       showToast(
-        "새 비밀번호를 입력하세요.",
+        "관리자 권한이 필요합니다.",
         "error"
       );
 
       return;
     }
 
-
-    try {
-
-      await setDoc(
-
-        doc(
-          db,
-          "settings",
-          "system"
-        ),
-
-        {
-          adminCode:
-            code
-        },
-
-        {
-          merge: true
-        }
-
-      );
-
-
-      setNewAdminCode("");
-
-
-      showToast(
-        "관리자 비밀번호를 변경했습니다.",
-        "success"
-      );
-
-    } catch (err) {
-
-      console.error(err);
-
-      showToast(
-        "비밀번호 변경 실패",
-        "error"
-      );
-
-    }
-
-  }
-
-
-
-  /*
-    Delete all reservations
-  */
-
-  async function resetAllLockers() {
 
     if (
       !window.confirm(
@@ -1220,6 +1338,7 @@ export default function App() {
         "success"
       );
 
+
     } catch (err) {
 
       console.error(err);
@@ -1254,8 +1373,11 @@ export default function App() {
     return (
 
       <div className="center-page error-text">
+
         <AlertCircle />
+
         {error}
+
       </div>
 
     );
@@ -1268,6 +1390,9 @@ export default function App() {
 
     <div className="app">
 
+
+      {/* Toast */}
+
       {toast && (
 
         <div
@@ -1277,8 +1402,7 @@ export default function App() {
         >
 
           {
-            toast.type ===
-            "error"
+            toast.type === "error"
 
               ? <AlertCircle size={19} />
 
@@ -1292,6 +1416,8 @@ export default function App() {
       )}
 
 
+
+      {/* 확인창 */}
 
       {confirmModal && (
 
@@ -1339,6 +1465,8 @@ export default function App() {
 
 
 
+      {/* 상단바 */}
+
       <header className="navbar">
 
         <div className="brand">
@@ -1351,10 +1479,20 @@ export default function App() {
             DS 사물함 예약 시스템
           </strong>
 
+
           {settings.isLocked && (
 
             <span className="locked-badge">
               변경 잠금됨
+            </span>
+
+          )}
+
+
+          {isAdmin && (
+
+            <span className="locked-badge">
+              관리자
             </span>
 
           )}
@@ -1398,6 +1536,8 @@ export default function App() {
       <main className="main-content">
 
 
+        {/* 관리자 영역 */}
+
         {showAdminPanel && (
 
           <section className="admin-panel">
@@ -1418,16 +1558,44 @@ export default function App() {
                 <div className="admin-login">
 
                   <input
-                    type="password"
-                    value={adminInput}
+                    type="email"
+                    value={adminEmail}
                     onChange={
                       event =>
-                        setAdminInput(
+                        setAdminEmail(
                           event.target.value
                         )
                     }
+                    placeholder="관리자 이메일"
+                  />
+
+
+                  <input
+                    type="password"
+                    value={adminPassword}
+                    onChange={
+                      event =>
+                        setAdminPassword(
+                          event.target.value
+                        )
+                    }
+                    onKeyDown={
+                      event => {
+
+                        if (
+                          event.key ===
+                          "Enter"
+                        ) {
+
+                          adminLogin();
+
+                        }
+
+                      }
+                    }
                     placeholder="비밀번호"
                   />
+
 
                   <button
                     onClick={
@@ -1443,11 +1611,15 @@ export default function App() {
 
                 <button
                   className="logout-button"
-                  onClick={() =>
-                    setIsAdmin(false)
+                  onClick={
+                    adminLogout
                   }
                 >
+
+                  <LogOut size={14} />
+
                   Logout
+
                 </button>
 
               )}
@@ -1461,12 +1633,18 @@ export default function App() {
               <div className="admin-grid">
 
 
+                {/* 학생 추가 */}
+
                 <div className="admin-card">
 
                   <h3>
+
                     <UserPlus size={16} />
+
                     학생 명단 등록
+
                   </h3>
+
 
                   <input
                     value={
@@ -1481,6 +1659,7 @@ export default function App() {
                     placeholder="학번"
                   />
 
+
                   <input
                     value={
                       adminStudentName
@@ -1493,6 +1672,7 @@ export default function App() {
                     }
                     placeholder="이름"
                   />
+
 
                   <button
                     className="admin-blue-button"
@@ -1507,14 +1687,18 @@ export default function App() {
 
 
 
+                {/* 학생 명단 */}
+
                 <div className="admin-card">
 
                   <h3>
+
                     <Users size={16} />
-                    등록 명단
-                    {" "}
-                    ({members.length}명)
+
+                    등록 명단 ({members.length}명)
+
                   </h3>
+
 
                   <div className="member-list">
 
@@ -1568,6 +1752,8 @@ export default function App() {
 
 
 
+                {/* 관리자 제어 */}
+
                 <div className="admin-card">
 
                   <h3>
@@ -1620,6 +1806,7 @@ export default function App() {
                       예약 관리
                     </button>
 
+
                     <button
                       className={
                         adminMode ===
@@ -1634,34 +1821,6 @@ export default function App() {
                       }
                     >
                       차단 모드
-                    </button>
-
-                  </div>
-
-
-
-                  <div className="password-section">
-
-                    <input
-                      type="password"
-                      value={
-                        newAdminCode
-                      }
-                      onChange={
-                        event =>
-                          setNewAdminCode(
-                            event.target.value
-                          )
-                      }
-                      placeholder="새 관리자 비밀번호"
-                    />
-
-                    <button
-                      onClick={
-                        changeAdminCode
-                      }
-                    >
-                      변경
                     </button>
 
                   </div>
@@ -1688,6 +1847,8 @@ export default function App() {
         )}
 
 
+
+        {/* 학생 인증 */}
 
         <section className="student-panel">
 
@@ -1778,6 +1939,8 @@ export default function App() {
         </section>
 
 
+
+        {/* 사물함 */}
 
         <section
           className={
@@ -1933,6 +2096,7 @@ export default function App() {
 
                               </strong>
 
+
                               {isAdmin && (
 
                                 <small>
@@ -1979,6 +2143,8 @@ export default function App() {
 
 
 
+        {/* 범례 */}
+
         <div className="legend">
 
           <span>
@@ -2008,4 +2174,5 @@ export default function App() {
     </div>
 
   );
+
 }
