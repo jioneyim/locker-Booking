@@ -47,18 +47,17 @@
 
         // Firebase Config
         const firebaseConfig = {
-            apiKey: "AIzaSyCANVK_865365opkg7r-rWHEZsFLQ93zJ0",
-            authDomain: "book-your-locker.firebaseapp.com",
-            projectId: "book-your-locker",
-            storageBucket: "book-your-locker.firebasestorage.app",
-            messagingSenderId: "859305778315",
-            appId: "1:859305778315:web:7defc0354ba246c1d5888e"
+            apiKey: "AIzaSyB0GlULzskkU2g3X2A1_0rtlKv34lAkTtY",
+            authDomain: "ds-locker.firebaseapp.com",
+            projectId: "ds-locker",
+            storageBucket: "ds-locker.firebasestorage.app",
+            messagingSenderId: "514012629826",
+            appId: "1:514012629826:web:1da5b2e1cda3e7aa8956db"
         };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = 'locker-system-authorized-v2';
 
         const ROWS = ['A', 'B', 'C', 'D', 'E'];
         const COLS = Array.from({ length: 18 }, (_, i) => i + 1);
